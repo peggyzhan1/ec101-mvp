@@ -3,6 +3,7 @@ from pathlib import Path
 
 from .common import ConversionRequest
 from .kuaima import convert_kuaima
+from .zhoupu import convert_zhoupu
 
 
 def _source(value: str) -> tuple[str, Path]:
@@ -14,7 +15,7 @@ def _source(value: str) -> tuple[str, Path]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="ec101-convert")
-    parser.add_argument("platform", choices=("kuaima",))
+    parser.add_argument("platform", choices=("kuaima", "zhoupu"))
     parser.add_argument("--dealer", required=True)
     parser.add_argument("--source", action="append", type=_source, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -24,8 +25,9 @@ def main(argv=None) -> int:
     sources = {}
     for role, path in args.source:
         sources.setdefault(role, []).append(path)
+    platform_name = "快马" if args.platform == "kuaima" else "舟谱"
     request = ConversionRequest(
-        platform="快马",
+        platform=platform_name,
         dealer_name=args.dealer,
         source_paths=sources,
         activity_inputs=[],
@@ -34,7 +36,7 @@ def main(argv=None) -> int:
         coverage_start=args.coverage_start,
         coverage_end=args.coverage_end,
     )
-    result = convert_kuaima(request)
+    result = convert_kuaima(request) if args.platform == "kuaima" else convert_zhoupu(request)
     print(result.workbook_path)
     print(result.sources_zip_path)
     print(result.report_path)
