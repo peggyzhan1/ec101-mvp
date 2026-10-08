@@ -15,6 +15,7 @@ def write_table(path: Path, headers, rows):
 
 
 def build_kuaima_request(tmp_path, *, fallback=False, duplicate_order_file=False):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     customer_no = "C-MISSING" if fallback else "C1"
     product_no = "P-MISSING" if fallback else "P1"
     customers = write_table(
