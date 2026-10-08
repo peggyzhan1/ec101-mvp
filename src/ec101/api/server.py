@@ -1,5 +1,6 @@
 from email.parser import BytesParser
 from email.policy import default
+import argparse
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -225,3 +226,18 @@ def serve(host: str, port: int, db_path: Path, archive_dir: Path) -> None:
         create_database(db_path)
     server = ThreadingHTTPServer((host, port), create_handler(db_path, archive_dir))
     server.serve_forever()
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="ec101-api")
+    parser.add_argument("--db", type=Path, default=Path("ec101.db"))
+    parser.add_argument("--archive-dir", type=Path, default=Path("archives"))
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args(argv)
+    serve(args.host, args.port, args.db, args.archive_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
