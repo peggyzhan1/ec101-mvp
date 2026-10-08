@@ -13,6 +13,8 @@ npm --prefix web install
 npm --prefix web run dev
 ```
 
+先启动 `ec101-api`，再启动 Web 开发服务器。开发服务器会将 `/api` 和 `/health` 自动转发至 `http://127.0.0.1:8000`；如 API 部署在其他地址，可设置 `VITE_API_BASE_URL`。
+
 桌面转换入口为 `python desktop/app.py`。Windows 打包可执行 `desktop/build_windows.ps1`。
 
 转换输出包含 `standard.xlsx`、`sources.zip` 与 `conversion_report.txt`。运行导入 API 时，来源归档路径应由部署方纳入备份；SQLite 数据库和归档文件均不应提交到仓库。
