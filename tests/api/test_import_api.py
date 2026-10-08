@@ -69,3 +69,23 @@ def test_post_import_archives_sources_imports_and_calculates_once(api_server, ap
     assert payload["status"] == "calculated"
     assert payload["calculationRunId"] > 0
     assert payload["archive"]["sha256"] == sha256(sources).hexdigest()
+
+
+def test_post_import_accepts_a_standard_workbook_without_sources(api_server, api_seed, api_db):
+    workbook = api_seed["conversion_a"].workbook_path.read_bytes()
+    body, content_type = multipart(
+        {"calcDate": "2026-09-22"},
+        [("standard", "standard.xlsx", workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")],
+    )
+    request = Request(
+        f"{api_server}/api/imports", data=body, method="POST",
+        headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+    )
+
+    with urlopen(request) as response:
+        payload = json.loads(response.read())
+
+    assert response.status == 201
+    assert payload["status"] == "calculated"
+    assert payload["archive"] is None
+    assert get_import(api_db, payload["importBatchId"])["files"] == []

@@ -3,7 +3,7 @@ import type { ActivityFee, BusinessRow, CouponSummary, ImportResult, Issue, Over
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface ApiClient {
-  upload(standard: File, sources: File, calcDate?: string): Promise<ImportResult>;
+  upload(standard: File, sources?: File, calcDate?: string): Promise<ImportResult>;
   overview(runId?: number): Promise<Overview>;
   activities(runId?: number, limit?: number, offset?: number): Promise<Page<ActivityFee>>;
   coupons(runId?: number, limit?: number, offset?: number): Promise<Page<CouponSummary>>;
@@ -31,7 +31,7 @@ export function createApiClient(baseUrl = import.meta.env.VITE_API_BASE_URL || "
   }
   return {
     async upload(standard, sources, calcDate) {
-      const body = new FormData(); body.set("standard", standard); body.set("sources", sources);
+      const body = new FormData(); body.set("standard", standard); if (sources) body.set("sources", sources);
       if (calcDate) body.set("calcDate", calcDate);
       return request<ImportResult>("/api/imports", { method: "POST", body });
     },

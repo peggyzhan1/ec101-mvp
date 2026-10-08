@@ -31,6 +31,18 @@ describe("API client", () => {
     expect(options.body.get("calcDate")).toBe("2026-10-08");
   });
 
+  it("uploads a standard workbook without a source archive", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ importBatchId: 1 }), { status: 201 }));
+    const client = createApiClient("", fetcher);
+    const standard = new File(["standard"], "standard.xlsx");
+
+    await client.upload(standard);
+
+    const [, options] = fetcher.mock.calls[0];
+    expect(options.body.get("standard")).toBe(standard);
+    expect(options.body.get("sources")).toBeNull();
+  });
+
   it("surfaces API error messages", async () => {
     const client = createApiClient("", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "接口不存在" }), { status: 404 })));
 

@@ -126,13 +126,13 @@ def validate_import(workbook: StandardWorkbook, db: sqlite3.Connection) -> list[
     return issues
 
 
-def _snapshot_key(manifest: Mapping[str, Any], archive: ArchiveMetadata) -> str:
+def _snapshot_key(manifest: Mapping[str, Any], archive: ArchiveMetadata | None) -> str:
     identity = "|".join((
         _value(manifest, "经销商名称"),
         _value(manifest, "平台名称"),
         _value(manifest, "数据开始日期"),
         _value(manifest, "数据结束日期"),
-        archive.sha256,
+        archive.sha256 if archive else "no-source-archive",
         uuid4().hex,
     ))
     return sha256(identity.encode("utf-8")).hexdigest()
@@ -141,7 +141,7 @@ def _snapshot_key(manifest: Mapping[str, Any], archive: ArchiveMetadata) -> str:
 def import_snapshot(
     db: sqlite3.Connection,
     workbook: StandardWorkbook,
-    archive: ArchiveMetadata,
+    archive: ArchiveMetadata | None = None,
 ) -> ImportResult:
     issues = validate_import(workbook, db)
     if issues:
@@ -172,11 +172,12 @@ def import_snapshot(
             ),
         )
         batch_id = int(cursor.lastrowid)
-        db.execute(
-            "INSERT INTO import_file "
-            "(import_batch_id, file_role, file_path, sha256, file_size) VALUES (?, 'sources', ?, ?, ?)",
-            (batch_id, archive.file_path, archive.sha256, archive.file_size),
-        )
+        if archive is not None:
+            db.execute(
+                "INSERT INTO import_file "
+                "(import_batch_id, file_role, file_path, sha256, file_size) VALUES (?, 'sources', ?, ?, ?)",
+                (batch_id, archive.file_path, archive.sha256, archive.file_size),
+            )
         db.execute(
             "INSERT INTO dealer_platform (dealer_name, platform_name) VALUES (?, ?) "
             "ON CONFLICT(dealer_name, platform_name) DO NOTHING",

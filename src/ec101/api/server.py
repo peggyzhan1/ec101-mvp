@@ -161,21 +161,23 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
             workbook_path = None
             try:
                 fields, files = self._multipart()
-                if "standard" not in files or "sources" not in files:
-                    raise ValueError("必须同时上传 standard 和 sources")
+                if "standard" not in files:
+                    raise ValueError("必须上传 standard")
                 archive_dir.mkdir(parents=True, exist_ok=True)
-                source_content = files["sources"][1]
-                archive_path = archive_dir / f"{uuid4().hex}-sources.zip"
-                archive_path.write_bytes(source_content)
+                source_content = files.get("sources", (None, None))[1]
+                if source_content is not None:
+                    archive_path = archive_dir / f"{uuid4().hex}-sources.zip"
+                    archive_path.write_bytes(source_content)
                 with NamedTemporaryFile(dir=archive_dir, suffix=".xlsx", delete=False) as temporary:
                     temporary.write(files["standard"][1])
                     workbook_path = Path(temporary.name)
                 workbook = read_standard_workbook(workbook_path)
                 db = connect_database(db_path)
                 try:
-                    imported = import_snapshot(db, workbook, ArchiveMetadata(
+                    archive = None if source_content is None else ArchiveMetadata(
                         str(archive_path), sha256(source_content).hexdigest(), len(source_content)
-                    ))
+                    )
+                    imported = import_snapshot(db, workbook, archive)
                     run_id = calculate_batch(db, imported.import_batch_id, fields.get("calcDate") or None)
                 finally:
                     db.close()
@@ -183,7 +185,7 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                     "importBatchId": imported.import_batch_id,
                     "calculationRunId": run_id,
                     "status": "calculated",
-                    "archive": {
+                    "archive": None if source_content is None else {
                         "filePath": str(archive_path),
                         "sha256": sha256(source_content).hexdigest(),
                         "fileSize": len(source_content),
