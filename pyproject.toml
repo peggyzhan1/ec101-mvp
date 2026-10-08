@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ec101"
+version = "0.1.0"
+description = "EC101 promotion fee data foundation"
+requires-python = ">=3.9"
+dependencies = [
+  "openpyxl>=3.1,<4",
+  "xlrd>=2,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
