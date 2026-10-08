@@ -14,6 +14,8 @@ from ec101.calculation.engine import calculate_batch
 from ec101.contract.workbook import read_standard_workbook
 from ec101.db import connect_database, create_database
 from ec101.importing.service import ArchiveMetadata, ImportValidationError, import_snapshot
+from ec101.reporting.roi import query_roi
+from ec101.reporting.verification import build_verification_workbook
 
 from .queries import (
     get_fee_overview,
@@ -51,6 +53,17 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_workbook(self, content):
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Content-Disposition", "attachment; filename=verification.xlsx")
+            self.end_headers()
+            self.wfile.write(content)
+
         def _query(self):
             parsed = urlparse(self.path)
             return parsed.path, parse_qs(parsed.query)
@@ -59,6 +72,23 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
             path, query = self._query()
             if path == "/health":
                 self._send(200, {"status": "ok"})
+                return
+            verification = re.fullmatch(r"/api/verification/(\d+)", path)
+            if verification:
+                temporary_path = None
+                db = connect_database(db_path)
+                try:
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    with NamedTemporaryFile(dir=archive_dir, suffix=".xlsx", delete=False) as temporary:
+                        temporary_path = Path(temporary.name)
+                    build_verification_workbook(db, int(verification.group(1)), temporary_path)
+                    self._send_workbook(temporary_path.read_bytes())
+                except LookupError as exc:
+                    self._send(404, {"error": str(exc)})
+                finally:
+                    db.close()
+                    if temporary_path is not None:
+                        temporary_path.unlink(missing_ok=True)
                 return
             db = connect_database(db_path)
             try:
@@ -117,6 +147,8 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                     "activities": list_activity_summaries(db, run_id, limit, offset),
                     "coupons": list_coupon_summaries(db, run_id, limit, offset),
                 }
+            if path == "/api/roi":
+                return {"items": query_roi(db, run_id)}
             raise LookupError(f"接口 {path} 不存在")
 
         def do_POST(self):
