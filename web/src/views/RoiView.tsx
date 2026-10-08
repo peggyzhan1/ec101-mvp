@@ -1,0 +1,2 @@
+import { useCallback } from "react"; import type { ApiClient } from "../api/client"; import { State, useLoad } from "./shared";
+export function RoiView({ api }: { api: ApiClient }) { const state = useLoad(useCallback(() => api.roi(), [api])); return <section><h2>ROI</h2><State {...state} empty={!state.data?.items.length}>{state.data?.items.map((row, index) => <div className="row" key={index}><span>{row.activityNo} {row.activityName}</span><span>{row.roi === null ? "缺少周期销量" : row.roi}</span></div>)}</State></section>; }

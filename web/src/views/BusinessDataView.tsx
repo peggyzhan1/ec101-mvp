@@ -1,0 +1,4 @@
+import { useCallback, useState } from "react";
+import type { ApiClient } from "../api/client";
+import { State, useLoad } from "./shared";
+export function BusinessDataView({ api }: { api: ApiClient }) { const [resource, setResource] = useState("orders"); const [query, setQuery] = useState(""); const load = useCallback(() => api.business(resource, query), [api, resource, query]); const state = useLoad(load); return <section><h2>业务数据</h2><select value={resource} onChange={(e) => setResource(e.target.value)}>{["customers", "products", "orders", "activities", "coupons"].map((item) => <option key={item}>{item}</option>)}</select><input aria-label="搜索" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="编号或名称" /><State {...state} empty={!state.data?.items.length}>{state.data?.items.map((row, index) => <pre key={index}>{JSON.stringify(row)}</pre>)}</State></section>; }

@@ -1,0 +1,2 @@
+import { useCallback } from "react"; import type { ApiClient } from "../api/client"; import { State, useLoad } from "./shared";
+export function IssuesView({ api }: { api: ApiClient }) { const state = useLoad(useCallback(() => api.issues(), [api])); return <section><h2>核算提示</h2><State {...state} empty={!state.data?.items.length}>{state.data?.items.map((row, index) => <div className="row" key={index}><span>{row.orderNo || "—"}</span><span>{row.reason}</span></div>)}</State></section>; }
