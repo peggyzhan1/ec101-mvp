@@ -2,7 +2,7 @@
 
 ## Purpose
 
-将快马、舟谱等经销商平台导出的业务数据转换为统一标准工作簿，导入 SQLite，并按照实际核销、订单已完成和 T-2 规则生成可追溯的费用 RESULT。
+将快马、舟谱等经销商平台导出的业务数据转换为统一标准工作簿，导入 SQLite，并以现行 `calculation_engine` 的实际核算行为生成可追溯的费用 RESULT。
 
 ## Current capabilities
 
