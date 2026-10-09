@@ -68,6 +68,16 @@ def test_import_rolls_back_everything_on_invalid_child_row(db, workbook_factory)
         assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
 
+def test_import_does_not_block_an_unmatched_coupon_customer(db, workbook_factory):
+    workbook = workbook_factory()
+    workbook.tables["标准优惠券核销明细"][0]["客户编号"] = "历史客户名称"
+
+    result = import_snapshot(db, workbook, archive())
+
+    assert result.status == "imported"
+    assert db.execute("SELECT customer_no FROM coupon_redemption").fetchone()[0] == "历史客户名称"
+
+
 def test_current_batch_switch_is_scoped_to_same_snapshot_window(db):
     snapshots = [
         (manifest("经销商甲", "平台甲", "2026-09-01", "2026-09-30"), 1),

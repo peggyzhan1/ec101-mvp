@@ -143,10 +143,6 @@ def import_snapshot(
     workbook: StandardWorkbook,
     archive: ArchiveMetadata | None = None,
 ) -> ImportResult:
-    issues = validate_import(workbook, db)
-    if issues:
-        raise ImportValidationError(issues)
-
     manifest = workbook.manifest
     dealer = _value(manifest, "经销商名称")
     platform = _value(manifest, "平台名称")

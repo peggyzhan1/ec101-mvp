@@ -54,10 +54,10 @@ def write_standard_workbook(
     workbook.close()
 
 
-def read_standard_workbook(path: str | Path) -> StandardWorkbook:
+def read_standard_workbook(path: str | Path, *, validate_contract: bool = False) -> StandardWorkbook:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
-        if tuple(workbook.sheetnames) != STANDARD_SHEETS:
+        if validate_contract and tuple(workbook.sheetnames) != STANDARD_SHEETS:
             raise ValueError("标准工作簿的工作表顺序不正确")
 
         loaded: dict[str, list[dict[str, str]]] = {}
@@ -66,7 +66,7 @@ def read_standard_workbook(path: str | Path) -> StandardWorkbook:
             rows = worksheet.iter_rows(values_only=True)
             actual_headers = tuple(_text(value) for value in next(rows, ()))
             expected_headers = SHEET_COLUMNS[sheet]
-            if actual_headers != expected_headers:
+            if validate_contract and actual_headers != expected_headers:
                 raise ValueError(f"{sheet} 的表头与标准契约不一致")
 
             records: list[dict[str, str]] = []
@@ -80,8 +80,8 @@ def read_standard_workbook(path: str | Path) -> StandardWorkbook:
             loaded[sheet] = records
 
         manifest_rows = loaded.pop("导入清单")
-        if len(manifest_rows) != 1:
+        if validate_contract and len(manifest_rows) != 1:
             raise ValueError("导入清单必须且只能包含一行")
-        return StandardWorkbook(tables=loaded, manifest=manifest_rows[0])
+        return StandardWorkbook(tables=loaded, manifest=manifest_rows[0] if manifest_rows else {})
     finally:
         workbook.close()

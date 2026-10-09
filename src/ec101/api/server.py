@@ -14,7 +14,7 @@ from uuid import uuid4
 from ec101.calculation.engine import calculate_batch
 from ec101.contract.workbook import read_standard_workbook
 from ec101.db import connect_database, create_database
-from ec101.importing.service import ArchiveMetadata, ImportValidationError, import_snapshot
+from ec101.importing.service import ArchiveMetadata, import_snapshot
 from ec101.reporting.roi import query_roi
 from ec101.reporting.verification import build_verification_workbook
 
@@ -171,7 +171,7 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                 with NamedTemporaryFile(dir=archive_dir, suffix=".xlsx", delete=False) as temporary:
                     temporary.write(files["standard"][1])
                     workbook_path = Path(temporary.name)
-                workbook = read_standard_workbook(workbook_path)
+                workbook = read_standard_workbook(workbook_path, validate_contract=False)
                 db = connect_database(db_path)
                 try:
                     archive = None if source_content is None else ArchiveMetadata(
@@ -191,8 +191,6 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                         "fileSize": len(source_content),
                     },
                 })
-            except ImportValidationError as exc:
-                self._send(422, {"error": str(exc), "issues": [issue.__dict__ for issue in exc.issues]})
             except (KeyError, TypeError, ValueError) as exc:
                 self._send(400, {"error": str(exc)})
             finally:

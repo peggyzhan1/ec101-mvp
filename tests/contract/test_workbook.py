@@ -56,7 +56,7 @@ def test_read_rejects_reordered_sheets(tmp_path):
     workbook.close()
 
     with pytest.raises(ValueError, match="工作表顺序"):
-        read_standard_workbook(path)
+        read_standard_workbook(path, validate_contract=True)
 
 
 def test_read_rejects_mismatched_headers(tmp_path):
@@ -68,7 +68,24 @@ def test_read_rejects_mismatched_headers(tmp_path):
     workbook.close()
 
     with pytest.raises(ValueError, match="表头"):
-        read_standard_workbook(path)
+        read_standard_workbook(path, validate_contract=True)
+
+
+def test_permissive_read_accepts_legacy_sheet_order_and_headers(tmp_path):
+    path = tmp_path / "legacy.xlsx"
+    tables = empty_tables()
+    tables["标准客户"] = [{"客户编号": "C1", "客户名称": "客户一"}]
+    write_standard_workbook(path, tables, manifest_row())
+    workbook = openpyxl.load_workbook(path)
+    workbook._sheets[0], workbook._sheets[1] = workbook._sheets[1], workbook._sheets[0]
+    workbook["标准客户"].cell(row=1, column=1, value="历史客户编码")
+    workbook.save(path)
+    workbook.close()
+
+    restored = read_standard_workbook(path)
+
+    assert restored.tables["标准客户"][0]["客户编号"] == "C1"
+    assert restored.tables["标准客户"][0]["客户名称"] == "客户一"
 
 
 @pytest.mark.parametrize("manifest", [[], [manifest_row(), copy(manifest_row())]])
