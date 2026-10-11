@@ -1,4 +1,4 @@
-import type { ActivityFee, BusinessRow, CouponSummary, ImportResult, Issue, Overview, Page, Release, Roi, UnlinkedCoupon } from "./types";
+import type { ActivityFee, BusinessRow, ConfirmationException, ConfirmationOverview, ConfirmationRecipient, CouponSummary, ImportResult, Issue, Overview, Page, RecipientImportResult, RecipientUploadInput, Release, Roi, SurveyImportResult, UnlinkedCoupon } from "./types";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -12,6 +12,11 @@ export interface ApiClient {
   release(batchId: number, candidate?: boolean): Promise<Page<Release>>;
   issues(runId?: number): Promise<Page<Issue>>;
   roi(runId?: number): Promise<{ items: Roi[] }>;
+  uploadRecipients(file: File, input: RecipientUploadInput): Promise<RecipientImportResult>;
+  uploadSurveys(file: File, feeCycle: string): Promise<SurveyImportResult>;
+  confirmationOverview(feeCycle: string): Promise<ConfirmationOverview>;
+  confirmationRecipients(feeCycle: string, status?: string, search?: string, limit?: number, offset?: number): Promise<Page<ConfirmationRecipient>>;
+  confirmationExceptions(feeCycle: string, kind?: string, limit?: number, offset?: number): Promise<Page<ConfirmationException>>;
 }
 
 function query(values: Record<string, string | number | undefined>): string {
@@ -43,5 +48,24 @@ export function createApiClient(baseUrl = import.meta.env.VITE_API_BASE_URL || "
     release: (batchId, candidate) => request(`/api/imports/${batchId}/release${query({ candidate: candidate === undefined ? undefined : String(candidate) })}`),
     issues: (runId) => request(`/api/fee-tpm/issues${query({ calculationRunId: runId })}`),
     roi: (runId) => request(`/api/roi${query({ calculationRunId: runId })}`),
+    async uploadRecipients(file, input) {
+      const body = new FormData();
+      body.set("recipients", file);
+      body.set("feeCycle", input.feeCycle); body.set("cycleName", input.cycleName);
+      body.set("periodStart", input.periodStart); body.set("periodEnd", input.periodEnd);
+      body.set("masterSyncBatchId", String(input.masterSyncBatchId));
+      return request<RecipientImportResult>("/api/fee-confirmation/recipients", { method: "POST", body });
+    },
+    async uploadSurveys(file, feeCycle) {
+      const body = new FormData(); body.set("survey", file); body.set("feeCycle", feeCycle);
+      return request<SurveyImportResult>("/api/fee-confirmation/surveys", { method: "POST", body });
+    },
+    confirmationOverview: (feeCycle) => request(`/api/fee-confirmation/overview${query({ feeCycle })}`),
+    confirmationRecipients: (feeCycle, status, search, limit = 100, offset = 0) => request(
+      `/api/fee-confirmation/recipients${query({ feeCycle, status, query: search, limit, offset })}`,
+    ),
+    confirmationExceptions: (feeCycle, kind, limit = 100, offset = 0) => request(
+      `/api/fee-confirmation/exceptions${query({ feeCycle, kind, limit, offset })}`,
+    ),
   };
 }
