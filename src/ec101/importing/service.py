@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from ec101.contract.schema import Issue, validate_rows
 from ec101.contract.workbook import StandardWorkbook
+from ec101.confirmation.master_data import upsert_platform_customer_identity
 
 
 @dataclass(frozen=True)
@@ -184,7 +185,7 @@ def import_snapshot(
             (dealer, platform),
         ).fetchone()[0]
 
-        _insert_customers(db, workbook, batch_id, dealer_platform_id)
+        _insert_customers(db, workbook, batch_id, dealer_platform_id, imported_at)
         _insert_products(db, workbook, batch_id, dealer_platform_id)
         order_ids = _insert_orders(db, workbook, batch_id, dealer_platform_id)
         activity_ids = _insert_activities(db, workbook, batch_id, order_ids)
@@ -195,13 +196,20 @@ def import_snapshot(
     return ImportResult(import_batch_id=batch_id, status="imported")
 
 
-def _insert_customers(db, workbook, batch_id, dealer_platform_id):
+def _insert_customers(db, workbook, batch_id, dealer_platform_id, imported_at):
     for row in workbook.tables.get("标准客户", ()):
         db.execute(
             "INSERT INTO customer VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (batch_id, dealer_platform_id, _value(row, "客户编号"), _value(row, "客户名称"),
              _nullable(row, "客户类型"), _nullable(row, "客户区域"), _nullable(row, "详细地址"),
              _nullable(row, "联系电话"), _nullable(row, "添加时间"), _nullable(row, "所属业务员")),
+        )
+        upsert_platform_customer_identity(
+            db,
+            dealer_platform_id,
+            _value(row, "客户编号"),
+            _nullable(row, "客户名称"),
+            imported_at,
         )
 
 
