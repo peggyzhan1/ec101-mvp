@@ -76,9 +76,13 @@ def _validate(customers: Sequence[Mapping[str, Any]], mappings: Sequence[Mapping
             if not _text(row, key):
                 issues.append(f"太古客资第 {index} 行缺少 {key}")
     for index, row in enumerate(mappings, start=1):
-        for key in ("source_mapping_id", "source_customer_code", "sap_customer_code", "match_status"):
+        for key in ("source_mapping_id", "match_status"):
             if not _text(row, key):
                 issues.append(f"客资映射第 {index} 行缺少 {key}")
+        if _text(row, "match_status") in {"匹配成功", "已确认"}:
+            for key in ("source_customer_code", "sap_customer_code"):
+                if not _text(row, key):
+                    issues.append(f"可用客资映射第 {index} 行缺少 {key}")
     if issues:
         raise MasterDataValidationError("；".join(issues))
 
@@ -140,7 +144,7 @@ def sync_master_data(
                     values.append(1 if row.get(key) in (True, 1, "1", "true", "True", "是") else 0)
                 elif key == "dealer_platform_id":
                     values.append(row.get(key))
-                elif key in {"source_mapping_id", "source_customer_code", "sap_customer_code", "match_status"}:
+                elif key in {"source_mapping_id", "match_status"}:
                     values.append(_text(row, key))
                 else:
                     values.append(_nullable(row, key))

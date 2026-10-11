@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FeeConfirmationView } from "./FeeConfirmationView";
 
+afterEach(cleanup);
 
 describe("FeeConfirmationView", () => {
   it("loads customer-cycle confirmation metrics, reconciliation, and exceptions on demand", async () => {
@@ -50,12 +51,12 @@ describe("FeeConfirmationView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "查询" }));
 
-    expect(await screen.findByText("5 / ¥1500")).toBeInTheDocument();
-    expect(screen.getByText("4 / ¥1300")).toBeInTheDocument();
-    expect(screen.getByText("1 / ¥200")).toBeInTheDocument();
-    expect(screen.getByText("2 / ¥700")).toBeInTheDocument();
-    expect(screen.getByText("1 / ¥500")).toBeInTheDocument();
-    expect(screen.getByText("1 / ¥100")).toBeInTheDocument();
+    expect(await screen.findByText("5 / ¥1500.00")).toBeInTheDocument();
+    expect(screen.getByText("4 / ¥1300.00")).toBeInTheDocument();
+    expect(screen.getByText("1 / ¥200.00")).toBeInTheDocument();
+    expect(screen.getByText("2 / ¥700.00")).toBeInTheDocument();
+    expect(screen.getByText("1 / ¥500.00")).toBeInTheDocument();
+    expect(screen.getByText("1 / ¥100.00")).toBeInTheDocument();
     expect(screen.getAllByText("客户B").length).toBeGreaterThan(0);
     expect(screen.getAllByText("未提交").length).toBeGreaterThan(0);
     expect(screen.getByText("名单外答卷")).toBeInTheDocument();
@@ -63,5 +64,54 @@ describe("FeeConfirmationView", () => {
     expect(screen.getByText("客资多义")).toBeInTheDocument();
     expect(screen.getAllByText("答卷冲突").length).toBeGreaterThan(0);
     expect(screen.queryByText(/手机号/)).not.toBeInTheDocument();
+  });
+
+  it("keeps cycle metadata coherent and pages recipient results", async () => {
+    const api = {
+      confirmationOverview: vi.fn().mockResolvedValue({
+        feeCycleCode: "2026-09",
+        recipient: { customerCount: 101, expectedAmount: 101 },
+        submitted: { customerCount: 0, expectedAmount: 0 },
+        notSubmitted: { customerCount: 101, expectedAmount: 101 },
+        received: { customerCount: 0, expectedAmount: 0 },
+        notReceived: { customerCount: 0, expectedAmount: 0 },
+        conflict: { customerCount: 0, expectedAmount: 0 },
+        outsideListResponseCount: 0,
+        unmatchedMapping: { customerCount: 0, expectedAmount: 0 },
+        ambiguousMapping: { customerCount: 0, expectedAmount: 0 },
+      }),
+      confirmationRecipients: vi.fn()
+        .mockResolvedValueOnce({
+          items: Array.from({ length: 100 }, (_, index) => ({
+            feeRecipientId: index + 1, feeCycleCode: "2026-09", sapCustomerCode: String(index + 1),
+            sapCustomerName: `客户${index + 1}`, expectedAmount: 1, mappingStatus: "matched",
+            hasConflict: false, confirmationStatus: "未提交",
+          })),
+          total: 101, limit: 100, offset: 0,
+        })
+        .mockResolvedValueOnce({
+          items: [{
+            feeRecipientId: 101, feeCycleCode: "2026-09", sapCustomerCode: "101",
+            sapCustomerName: "客户101", expectedAmount: 1, mappingStatus: "matched",
+            hasConflict: false, confirmationStatus: "未提交",
+          }],
+          total: 101, limit: 100, offset: 100,
+        }),
+      confirmationExceptions: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 }),
+      uploadRecipients: vi.fn(), uploadSurveys: vi.fn(),
+    };
+    render(<FeeConfirmationView api={api as never} />);
+
+    fireEvent.change(screen.getByLabelText("费用周期"), { target: { value: "2026-09" } });
+    expect(screen.getByLabelText("周期名称")).toHaveValue("2026-09 协议费用");
+    expect(screen.getByLabelText("周期开始")).toHaveValue("2026-09-01");
+    expect(screen.getByLabelText("周期结束")).toHaveValue("2026-09-30");
+    fireEvent.click(screen.getByRole("button", { name: "查询" }));
+    expect(await screen.findByText("1-100 / 101")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页客户" }));
+
+    expect(api.confirmationRecipients).toHaveBeenLastCalledWith("2026-09", undefined, undefined, 100, 100);
+    expect(await screen.findByText("101-101 / 101")).toBeInTheDocument();
   });
 });

@@ -53,10 +53,22 @@ def _prepared_response(
         reason = f"答案无效：{answer_text or '为空'}"
     elif answer == "not_received" and not _text(row, "未收到原因"):
         reason = "选择尚未收到时必须填写未收到原因"
-    submitted_at = _text(row, "提交时间")
-    if reason is None and not submitted_at:
+    submitted_text = _text(row, "提交时间")
+    submitted_at = None
+    if submitted_text:
+        try:
+            submitted_at = datetime.strptime(
+                submitted_text, "%Y-%m-%d %H:%M:%S"
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            if reason is None:
+                reason = "提交时间必须为 YYYY-MM-DD HH:MM:SS"
+    elif reason is None:
         reason = "提交时间为空"
-    raw_sequence_no = _text(row, "问卷星原始序号") or f"__missing__{row_number}"
+    raw_sequence_text = _text(row, "问卷星原始序号")
+    if not raw_sequence_text and reason is None:
+        reason = "问卷星原始序号为空"
+    raw_sequence_no = raw_sequence_text or f"__missing__{row_number}"
 
     if reason is not None:
         match_status = "invalid"
@@ -73,7 +85,7 @@ def _prepared_response(
         fee_cycle_code,
         raw_sequence_no,
         customer_code,
-        submitted_at,
+        submitted_at or "",
         answer or "",
     ))
     return {
@@ -115,6 +127,13 @@ def import_survey_responses(
         (fee_cycle_id, source_file_sha256),
     ).fetchone():
         raise SurveyValidationError("同一费用周期的问卷文件已重复导入")
+
+    raw_sequences = [
+        _text(row, "问卷星原始序号") for row in rows
+        if _text(row, "问卷星原始序号")
+    ]
+    if len(raw_sequences) != len(set(raw_sequences)):
+        raise SurveyValidationError("导入文件中包含重复的问卷星原始序号")
 
     prepared = [
         _prepared_response(db, fee_cycle_id, fee_cycle_code, row, index, timestamp)

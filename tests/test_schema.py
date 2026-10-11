@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from ec101.confirmation.master_data import sync_master_data
+from ec101.confirmation.recipients import FeeCycleInput, import_fee_recipients
 from ec101.db import connect_database, create_database, upgrade_database
 
 
@@ -229,6 +231,101 @@ def test_upgrade_database_adds_confirmation_schema_to_existing_database_once(
             """
         )
         db.commit()
+    finally:
+        db.close()
+
+
+def test_upgrade_database_backfills_existing_platform_customer_identities(
+    database_path: Path,
+) -> None:
+    db = connect_database(database_path)
+    try:
+        db.executescript(
+            """
+            CREATE TABLE import_batch (
+              import_batch_id INTEGER PRIMARY KEY,
+              snapshot_key TEXT NOT NULL UNIQUE,
+              dealer_name TEXT NOT NULL,
+              platform_name TEXT NOT NULL,
+              template_version TEXT NOT NULL,
+              converter_version TEXT NOT NULL,
+              imported_at TEXT NOT NULL,
+              status TEXT NOT NULL
+            );
+            CREATE TABLE dealer_platform (
+              dealer_platform_id INTEGER PRIMARY KEY,
+              dealer_name TEXT NOT NULL,
+              platform_name TEXT NOT NULL
+            );
+            CREATE TABLE customer (
+              customer_id INTEGER PRIMARY KEY,
+              import_batch_id INTEGER NOT NULL,
+              dealer_platform_id INTEGER NOT NULL,
+              customer_no TEXT NOT NULL,
+              customer_name TEXT NOT NULL,
+              customer_type TEXT,
+              customer_region TEXT,
+              address TEXT,
+              phone TEXT,
+              added_at TEXT,
+              salesperson TEXT
+            );
+            CREATE TABLE activity (
+              activity_id INTEGER PRIMARY KEY,
+              import_batch_id INTEGER NOT NULL REFERENCES import_batch(import_batch_id)
+            );
+            INSERT INTO import_batch VALUES
+              (1, 'old', '兴路强', '兴路强平台', '1', '1', '2026-09-01 08:00:00', 'imported');
+            INSERT INTO dealer_platform VALUES (1, '兴路强', '兴路强平台');
+            INSERT INTO customer VALUES
+              (1, 1, 1, '00081', '历史客户', NULL, NULL, NULL, NULL, NULL, NULL);
+            """
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    upgrade_database(database_path)
+
+    db = connect_database(database_path)
+    try:
+        assert tuple(db.execute(
+            "SELECT dealer_platform_id, platform_customer_no, latest_customer_name, "
+            "first_seen_at, last_seen_at FROM platform_customer_identity"
+        ).fetchone()) == (1, "00081", "历史客户", "2026-09-01 08:00:00", "2026-09-01 08:00:00")
+        master = sync_master_data(
+            db,
+            "areapartner",
+            [{
+                "sap_customer_primary_key": "sap-1",
+                "sap_customer_code": "0570502563",
+                "sap_customer_name": "太古客户",
+            }],
+            [{
+                "source_mapping_id": "mapping-1",
+                "dealer_platform_id": 1,
+                "source_customer_code": "00081",
+                "source_customer_name": "历史客户",
+                "sap_customer_code": "0570502563",
+                "sap_customer_name": "太古客户",
+                "match_status": "匹配成功",
+            }],
+            "2026-10-01 09:00:00",
+        )
+        result = import_fee_recipients(
+            db,
+            FeeCycleInput("2026-09", "2026年9月", "2026-09-01", "2026-09-30"),
+            [{
+                "费用周期": "2026-09",
+                "太古客户编号": "0570502563",
+                "太古客户名称": "太古客户",
+                "应发金额": "100.00",
+                "备注": "",
+            }],
+            master.master_sync_batch_id,
+            "2026-10-01 10:00:00",
+        )
+        assert result.matched_count == 1
     finally:
         db.close()
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 import sqlite3
+import re
 from typing import Any, Mapping, Sequence
 
 from .workbook import (
@@ -34,6 +35,25 @@ class FeeRecipientImportResult:
 def _text(row: Mapping[str, Any], key: str) -> str:
     value = row.get(key)
     return "" if value is None else str(value).strip()
+
+
+def _validate_cycle(cycle: FeeCycleInput) -> None:
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", cycle.fee_cycle_code):
+        raise FeeRecipientValidationError("费用周期必须为 YYYY-MM")
+    if not cycle.cycle_name.strip():
+        raise FeeRecipientValidationError("周期名称不能为空")
+    try:
+        period_start = datetime.strptime(cycle.period_start, "%Y-%m-%d").date()
+        period_end = datetime.strptime(cycle.period_end, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise FeeRecipientValidationError("周期开始和结束日期必须为 YYYY-MM-DD") from exc
+    if period_start > period_end:
+        raise FeeRecipientValidationError("周期开始日期不能晚于结束日期")
+    if (
+        period_start.strftime("%Y-%m") != cycle.fee_cycle_code
+        or period_end.strftime("%Y-%m") != cycle.fee_cycle_code
+    ):
+        raise FeeRecipientValidationError("周期开始和结束日期必须属于费用周期")
 
 
 def _validated_groups(
@@ -121,6 +141,7 @@ def import_fee_recipients(
     imported_at: str | None = None,
 ) -> FeeRecipientImportResult:
     timestamp = imported_at or datetime.now().isoformat(timespec="seconds")
+    _validate_cycle(cycle)
     if db.execute(
         "SELECT 1 FROM fee_cycle WHERE fee_cycle_code = ?", (cycle.fee_cycle_code,)
     ).fetchone():

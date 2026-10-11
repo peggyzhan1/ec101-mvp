@@ -122,3 +122,29 @@ def test_upsert_platform_customer_identity_updates_one_stable_identity(db):
         "SELECT platform_customer_no, latest_customer_name, first_seen_at, last_seen_at "
         "FROM platform_customer_identity"
     ).fetchone()) == ("00081", "新名称", "2026-09-01 09:00:00", "2026-10-01 09:00:00")
+
+
+def test_sync_master_data_preserves_incomplete_unsuccessful_mappings(db):
+    platform_id = dealer_platform(db)
+
+    result = sync_master_data(
+        db,
+        "areapartner",
+        [customer()],
+        [
+            mapping(platform_id, source_customer_code="", match_status="匹配失败"),
+            mapping(
+                platform_id,
+                source_mapping_id="mapping-2",
+                sap_customer_code="",
+                match_status="待确认",
+            ),
+        ],
+        synced_at="2026-10-11 10:00:00",
+    )
+
+    assert result.mapping_count == 2
+    assert [tuple(row) for row in db.execute(
+        "SELECT source_customer_code, sap_customer_code, match_status "
+        "FROM customer_mapping_snapshot ORDER BY source_mapping_id"
+    )] == [(None, "0570502563", "匹配失败"), ("00081", None, "待确认")]

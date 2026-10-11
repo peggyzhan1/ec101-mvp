@@ -3,6 +3,7 @@ from email.policy import default
 import argparse
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,7 @@ from tempfile import NamedTemporaryFile
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
+from zipfile import BadZipFile, ZipFile
 
 from ec101.calculation.engine import calculate_batch
 from ec101.confirmation.queries import (
@@ -40,6 +42,22 @@ from .queries import (
     list_release_candidates,
     list_unlinked_coupons,
 )
+
+
+MAX_MULTIPART_BYTES = 25 * 1024 * 1024
+MAX_WORKBOOK_BYTES = 10 * 1024 * 1024
+MAX_WORKBOOK_EXPANDED_BYTES = 100 * 1024 * 1024
+
+
+def _validate_workbook_upload(content: bytes) -> None:
+    if len(content) > MAX_WORKBOOK_BYTES:
+        raise ValueError("工作簿压缩文件大小超过 10 MB")
+    try:
+        with ZipFile(BytesIO(content)) as archive:
+            if sum(item.file_size for item in archive.infolist()) > MAX_WORKBOOK_EXPANDED_BYTES:
+                raise ValueError("工作簿解压后大小超过 100 MB")
+    except BadZipFile as exc:
+        raise ValueError("上传文件不是有效的 XLSX 文件") from exc
 
 
 def _integer(query, name, default):
@@ -207,6 +225,7 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                 fields, files = self._multipart()
                 if "standard" not in files:
                     raise ValueError("必须上传 standard")
+                _validate_workbook_upload(files["standard"][1])
                 archive_dir.mkdir(parents=True, exist_ok=True)
                 source_content = files.get("sources", (None, None))[1]
                 if source_content is not None:
@@ -245,6 +264,7 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                 fields, files = self._multipart()
                 if "recipients" not in files:
                     raise ValueError("必须上传 recipients")
+                _validate_workbook_upload(files["recipients"][1])
                 required = (
                     "feeCycle", "cycleName", "periodStart", "periodEnd", "masterSyncBatchId",
                 )
@@ -293,6 +313,7 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                 if not fee_cycle:
                     raise ValueError("缺少字段：feeCycle")
                 filename, content = files["survey"]
+                _validate_workbook_upload(content)
                 archive_dir.mkdir(parents=True, exist_ok=True)
                 with NamedTemporaryFile(dir=archive_dir, suffix=".xlsx", delete=False) as temporary:
                     temporary.write(content)
@@ -324,7 +345,14 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
             content_type = self.headers.get("Content-Type", "")
             if not content_type.startswith("multipart/form-data"):
                 raise ValueError("Content-Type 必须是 multipart/form-data")
-            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError as exc:
+                raise ValueError("Content-Length 无效") from exc
+            if length <= 0:
+                raise ValueError("上传内容为空")
+            if length > MAX_MULTIPART_BYTES:
+                raise ValueError("上传请求大小超过限制")
             body = self.rfile.read(length)
             message = BytesParser(policy=default).parsebytes(
                 f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode() + body

@@ -29,7 +29,10 @@ def db(tmp_path):
     connection.close()
 
 
-def response(sequence="1", code="0570502563", answer="已收到", reason="", cycle="2026-09"):
+def response(
+    sequence="1", code="0570502563", answer="已收到", reason="", cycle="2026-09",
+    submitted_at="2026-10-09 16:15:00",
+):
     return {
         "费用周期": cycle,
         "太古客户编号": code,
@@ -38,7 +41,7 @@ def response(sequence="1", code="0570502563", answer="已收到", reason="", cyc
         "未收到原因": reason,
         "补充说明": "",
         "答卷手机号": "13800000000",
-        "提交时间": "2026-10-09 16:15:00",
+        "提交时间": submitted_at,
         "问卷星原始序号": sequence,
     }
 
@@ -122,3 +125,42 @@ def test_import_survey_responses_rejects_duplicate_fingerprint_atomically(db):
 
     assert db.execute("SELECT COUNT(*) FROM survey_import_batch").fetchone()[0] == 1
     assert db.execute("SELECT COUNT(*) FROM survey_response").fetchone()[0] == 1
+
+
+def test_import_survey_responses_marks_malformed_timestamp_invalid(db):
+    result = import_survey_responses(
+        db, "2026-09", "bad-date.xlsx", "bad-date-hash",
+        [response(submitted_at="2026/10/09 16:15")], "2026-10-11 12:00:00",
+    )
+
+    assert result.invalid_count == 1
+    row = db.execute(
+        "SELECT submitted_at, match_status, match_reason FROM survey_response"
+    ).fetchone()
+    assert row["submitted_at"] is None
+    assert row["match_status"] == "invalid"
+    assert "提交时间" in row["match_reason"]
+
+
+def test_import_survey_responses_invalidates_missing_sequence_and_rejects_duplicates(db):
+    missing = import_survey_responses(
+        db, "2026-09", "missing.xlsx", "missing-hash", [response(sequence="")],
+        "2026-10-11 12:00:00",
+    )
+    assert missing.invalid_count == 1
+    assert db.execute(
+        "SELECT match_status FROM survey_response WHERE survey_import_batch_id = ?",
+        (missing.survey_import_batch_id,),
+    ).fetchone()[0] == "invalid"
+
+    with pytest.raises(SurveyValidationError, match="原始序号"):
+        import_survey_responses(
+            db,
+            "2026-09",
+            "duplicates.xlsx",
+            "duplicates-hash",
+            [response("2", answer="已收到"), response("2", answer="尚未收到", reason="未到账")],
+            "2026-10-11 12:01:00",
+        )
+
+    assert db.execute("SELECT COUNT(*) FROM survey_import_batch").fetchone()[0] == 1

@@ -34,7 +34,10 @@ def _cycle_id(db: sqlite3.Connection, fee_cycle_code: str) -> int:
 
 
 def _metric(row) -> dict[str, Any]:
-    return {"customerCount": int(row[0]), "expectedAmount": row[1] or 0}
+    return {
+        "customerCount": int(row[0]),
+        "expectedAmount": round(float(row[1] or 0), 2),
+    }
 
 
 def get_confirmation_overview(
@@ -129,65 +132,41 @@ def list_confirmation_exceptions(
     if kind is not None and kind not in _EXCEPTION_KINDS:
         raise ValueError(f"未知异常类型：{kind}")
     limit, offset = _page(limit, offset)
-    items: list[dict[str, Any]] = []
-
-    def wanted(value: str) -> bool:
-        return kind is None or kind == value
-
-    if wanted("outside_list"):
-        for row in db.execute(
-            "SELECT sap_customer_code, sap_customer_name, received_answer, submitted_at, "
-            "raw_sequence_no, match_reason FROM survey_response "
-            "WHERE fee_cycle_id = ? AND match_status = 'not_in_recipient_list'",
-            (fee_cycle_id,),
-        ):
-            items.append({
-                "kind": "outside_list", "sapCustomerCode": row[0], "sapCustomerName": row[1],
-                "receivedAnswer": row[2], "submittedAt": row[3], "rawSequenceNo": row[4],
-                "matchReason": row[5], "expectedAmount": None,
-            })
-    if wanted("invalid_response"):
-        for row in db.execute(
-            "SELECT sap_customer_code, sap_customer_name, received_answer, submitted_at, "
-            "raw_sequence_no, match_reason FROM survey_response "
-            "WHERE fee_cycle_id = ? AND match_status = 'invalid'",
-            (fee_cycle_id,),
-        ):
-            items.append({
-                "kind": "invalid_response", "sapCustomerCode": row[0], "sapCustomerName": row[1],
-                "receivedAnswer": row[2], "submittedAt": row[3], "rawSequenceNo": row[4],
-                "matchReason": row[5], "expectedAmount": None,
-            })
-    if wanted("conflict"):
-        for row in db.execute(
-            "SELECT sap_customer_code, sap_customer_name, expected_amount, received_answer, "
-            "submitted_at FROM v_fee_confirmation_reconciliation "
-            "WHERE fee_cycle_id = ? AND has_conflict = 1",
-            (fee_cycle_id,),
-        ):
-            items.append({
-                "kind": "conflict", "sapCustomerCode": row[0], "sapCustomerName": row[1],
-                "expectedAmount": row[2], "receivedAnswer": row[3], "submittedAt": row[4],
-                "rawSequenceNo": None, "matchReason": "同一客户周期存在相互冲突的有效答卷",
-            })
-    for mapping_status, exception_kind in (
-        ("unmatched", "unmatched_mapping"),
-        ("ambiguous", "ambiguous_mapping"),
-    ):
-        if not wanted(exception_kind):
-            continue
-        for row in db.execute(
-            "SELECT sap_customer_code, sap_customer_name, expected_amount, mapping_reason "
-            "FROM fee_recipient WHERE fee_cycle_id = ? AND mapping_status = ?",
-            (fee_cycle_id, mapping_status),
-        ):
-            items.append({
-                "kind": exception_kind, "sapCustomerCode": row[0], "sapCustomerName": row[1],
-                "expectedAmount": row[2], "receivedAnswer": None, "submittedAt": None,
-                "rawSequenceNo": None, "matchReason": row[3],
-            })
-    items.sort(key=lambda item: (
-        item["kind"], item.get("sapCustomerCode") or "", item.get("rawSequenceNo") or ""
-    ))
-    total = len(items)
-    return {"items": items[offset:offset + limit], "total": total, "limit": limit, "offset": offset}
+    cte = (
+        "WITH exceptions AS ("
+        "SELECT 'outside_list' AS kind, sap_customer_code, sap_customer_name, NULL AS expected_amount, "
+        "received_answer, submitted_at, raw_sequence_no, match_reason FROM survey_response "
+        "WHERE fee_cycle_id = ? AND match_status = 'not_in_recipient_list' UNION ALL "
+        "SELECT 'invalid_response', sap_customer_code, sap_customer_name, NULL, received_answer, "
+        "submitted_at, raw_sequence_no, match_reason FROM survey_response "
+        "WHERE fee_cycle_id = ? AND match_status = 'invalid' UNION ALL "
+        "SELECT 'conflict', sap_customer_code, sap_customer_name, expected_amount, received_answer, "
+        "submitted_at, NULL, '同一客户周期存在相互冲突的有效答卷' "
+        "FROM v_fee_confirmation_reconciliation WHERE fee_cycle_id = ? AND has_conflict = 1 UNION ALL "
+        "SELECT 'unmatched_mapping', sap_customer_code, sap_customer_name, expected_amount, NULL, "
+        "NULL, NULL, mapping_reason FROM fee_recipient "
+        "WHERE fee_cycle_id = ? AND mapping_status = 'unmatched' UNION ALL "
+        "SELECT 'ambiguous_mapping', sap_customer_code, sap_customer_name, expected_amount, NULL, "
+        "NULL, NULL, mapping_reason FROM fee_recipient "
+        "WHERE fee_cycle_id = ? AND mapping_status = 'ambiguous') "
+    )
+    params: list[Any] = [fee_cycle_id] * 5
+    where = "WHERE kind = ?" if kind is not None else ""
+    if kind is not None:
+        params.append(kind)
+    total = db.execute(cte + f"SELECT COUNT(*) FROM exceptions {where}", params).fetchone()[0]
+    rows = db.execute(
+        cte
+        + "SELECT kind, sap_customer_code AS sapCustomerCode, "
+        "sap_customer_name AS sapCustomerName, expected_amount AS expectedAmount, "
+        "received_answer AS receivedAnswer, submitted_at AS submittedAt, "
+        "raw_sequence_no AS rawSequenceNo, match_reason AS matchReason "
+        f"FROM exceptions {where} ORDER BY kind, sap_customer_code, raw_sequence_no "
+        "LIMIT ? OFFSET ?",
+        [*params, limit, offset],
+    ).fetchall()
+    items = [dict(row) for row in rows]
+    for item in items:
+        if item["expectedAmount"] is not None:
+            item["expectedAmount"] = round(float(item["expectedAmount"]), 2)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}

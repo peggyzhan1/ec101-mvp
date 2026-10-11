@@ -25,10 +25,15 @@ function cycleDates(cycle: string) {
   };
 }
 
+function money(value: number) {
+  return Number(value).toFixed(2);
+}
+
 const metricItems: Array<[keyof ConfirmationOverview, string]> = [
   ["recipient", "应发"], ["submitted", "已提交"], ["notSubmitted", "未提交"],
   ["received", "已确认收到"], ["notReceived", "确认未收到"], ["conflict", "答卷冲突"],
 ];
+const PAGE_SIZE = 100;
 
 export function FeeConfirmationView({ api }: { api: ApiClient }) {
   const initialCycle = currentCycle();
@@ -45,17 +50,37 @@ export function FeeConfirmationView({ api }: { api: ApiClient }) {
   const [overview, setOverview] = useState<ConfirmationOverview>();
   const [recipients, setRecipients] = useState<ConfirmationRecipient[]>([]);
   const [exceptions, setExceptions] = useState<ConfirmationException[]>([]);
+  const [recipientTotal, setRecipientTotal] = useState(0);
+  const [recipientOffset, setRecipientOffset] = useState(0);
+  const [exceptionTotal, setExceptionTotal] = useState(0);
+  const [exceptionOffset, setExceptionOffset] = useState(0);
   const [message, setMessage] = useState("");
 
-  async function refresh() {
+  function changeCycle(nextCycle: string) {
+    setFeeCycle(nextCycle);
+    const dates = cycleDates(nextCycle);
+    setCycleName(nextCycle ? `${nextCycle} 协议费用` : "");
+    setPeriodStart(dates.start);
+    setPeriodEnd(dates.end);
+  }
+
+  async function refresh(nextRecipientOffset = 0, nextExceptionOffset = 0) {
     setMessage("加载中…");
     try {
       const [nextOverview, nextRecipients, nextExceptions] = await Promise.all([
         api.confirmationOverview(feeCycle),
-        api.confirmationRecipients(feeCycle, status || undefined, search || undefined),
-        api.confirmationExceptions(feeCycle),
+        api.confirmationRecipients(
+          feeCycle, status || undefined, search || undefined, PAGE_SIZE, nextRecipientOffset,
+        ),
+        api.confirmationExceptions(feeCycle, undefined, PAGE_SIZE, nextExceptionOffset),
       ]);
-      setOverview(nextOverview); setRecipients(nextRecipients.items); setExceptions(nextExceptions.items);
+      setOverview(nextOverview);
+      setRecipients(nextRecipients.items);
+      setRecipientTotal(nextRecipients.total);
+      setRecipientOffset(nextRecipientOffset);
+      setExceptions(nextExceptions.items);
+      setExceptionTotal(nextExceptions.total);
+      setExceptionOffset(nextExceptionOffset);
       setMessage("");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "查询失败");
@@ -90,13 +115,13 @@ export function FeeConfirmationView({ api }: { api: ApiClient }) {
     <h2>客户确认</h2>
     <p>本月全部协议费用是否收到</p>
     <div className="confirmation-controls">
-      <label>费用周期<input value={feeCycle} onChange={(event) => setFeeCycle(event.target.value)} placeholder="YYYY-MM" /></label>
+      <label>费用周期<input value={feeCycle} onChange={(event) => changeCycle(event.target.value)} placeholder="YYYY-MM" /></label>
       <label>确认状态<select value={status} onChange={(event) => setStatus(event.target.value)}>
         <option value="">全部</option><option>未提交</option><option>已确认收到</option>
         <option>确认未收到</option><option>答卷冲突</option>
       </select></label>
       <label>客户搜索<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="编号或名称" /></label>
-      <button type="button" onClick={refresh}>查询</button>
+      <button type="button" onClick={() => refresh(0, 0)}>查询</button>
     </div>
     <div className="confirmation-upload-grid">
       <div className="card">
@@ -117,19 +142,27 @@ export function FeeConfirmationView({ api }: { api: ApiClient }) {
     {message && <p role="status">{message}</p>}
     {overview && <div className="metrics confirmation-metrics">{metricItems.map(([key, label]) => {
       const value = overview[key] as { customerCount: number; expectedAmount: number };
-      return <div key={key}><small>{label}</small><strong>{value.customerCount} / ¥{value.expectedAmount}</strong></div>;
+      return <div key={key}><small>{label}</small><strong>{value.customerCount} / ¥{money(value.expectedAmount)}</strong></div>;
     })}</div>}
     {overview && <div className="card"><h3>对账结果</h3><div className="table-wrap"><table><thead><tr>
       <th>太古客户编号</th><th>客户名称</th><th>应发金额</th><th>映射状态</th><th>确认状态</th><th>提交时间</th>
     </tr></thead><tbody>{recipients.map((item) => <tr key={item.feeRecipientId}>
-      <td>{item.sapCustomerCode}</td><td>{item.sapCustomerName}</td><td>¥{item.expectedAmount}</td>
+      <td>{item.sapCustomerCode}</td><td>{item.sapCustomerName}</td><td>¥{money(item.expectedAmount)}</td>
       <td>{item.mappingStatus}</td><td>{item.confirmationStatus}</td><td>{item.submittedAt || "—"}</td>
-    </tr>)}</tbody></table></div></div>}
+    </tr>)}</tbody></table></div><div className="pagination">
+      <button type="button" disabled={recipientOffset === 0} onClick={() => refresh(Math.max(0, recipientOffset - PAGE_SIZE), exceptionOffset)}>上一页客户</button>
+      <span>{recipientTotal === 0 ? "0 / 0" : `${recipientOffset + 1}-${Math.min(recipientOffset + recipients.length, recipientTotal)} / ${recipientTotal}`}</span>
+      <button type="button" disabled={recipientOffset + PAGE_SIZE >= recipientTotal} onClick={() => refresh(recipientOffset + PAGE_SIZE, exceptionOffset)}>下一页客户</button>
+    </div></div>}
     {overview && <div className="card"><h3>异常核查</h3>{exceptions.length === 0 ? <p>暂无异常</p> : exceptions.map((item, index) =>
       <div className="row" key={`${item.kind}-${item.sapCustomerCode}-${index}`}>
         <strong>{exceptionLabels[item.kind] || item.kind}</strong>
         <span>{item.sapCustomerCode || "—"} · {item.sapCustomerName || "—"}</span>
         <span>{item.matchReason || "待人工核查"}</span>
-      </div>)}</div>}
+      </div>)}<div className="pagination">
+        <button type="button" disabled={exceptionOffset === 0} onClick={() => refresh(recipientOffset, Math.max(0, exceptionOffset - PAGE_SIZE))}>上一页异常</button>
+        <span>{exceptionTotal === 0 ? "0 / 0" : `${exceptionOffset + 1}-${Math.min(exceptionOffset + exceptions.length, exceptionTotal)} / ${exceptionTotal}`}</span>
+        <button type="button" disabled={exceptionOffset + PAGE_SIZE >= exceptionTotal} onClick={() => refresh(recipientOffset, exceptionOffset + PAGE_SIZE)}>下一页异常</button>
+      </div></div>}
   </section>;
 }

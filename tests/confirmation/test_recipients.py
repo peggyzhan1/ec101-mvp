@@ -175,3 +175,24 @@ def test_replace_fee_cycle_activities_deduplicates_and_rejects_unknown_activity(
     ).fetchone()) == (activity_id, platform_id)
     with pytest.raises(FeeRecipientValidationError, match="不存在"):
         replace_fee_cycle_activities(db, int(cycle_id), [999])
+
+
+@pytest.mark.parametrize(
+    "invalid_cycle",
+    [
+        FeeCycleInput("2026-9", "九月", "2026-09-01", "2026-09-30"),
+        FeeCycleInput("2026-09", "九月", "2026-09-30", "2026-09-01"),
+        FeeCycleInput("2026-09", "九月", "2026-08-01", "2026-09-30"),
+        FeeCycleInput("2026-09", "九月", "bad-date", "2026-09-30"),
+    ],
+)
+def test_import_fee_recipients_rejects_invalid_or_incoherent_cycle(db, invalid_cycle):
+    platform_id = add_platform(db)
+    sync = sync_mapping(db, platform_id, [])
+    row = recipient_row()
+    row["费用周期"] = invalid_cycle.fee_cycle_code
+
+    with pytest.raises(FeeRecipientValidationError, match="周期"):
+        import_fee_recipients(
+            db, invalid_cycle, [row], sync.master_sync_batch_id, "2026-10-11"
+        )

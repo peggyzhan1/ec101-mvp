@@ -122,3 +122,23 @@ def test_confirmation_queries_validate_cycle_filters_and_pagination(db):
     page = list_confirmation_reconciliation(db, "2026-09", None, "客户", 999, -10)
     assert page["limit"] == 500
     assert page["offset"] == 0
+
+
+def test_confirmation_overview_normalizes_fractional_money(db):
+    db.execute("UPDATE fee_recipient SET expected_amount = 0.10 WHERE sap_customer_code = 'A'")
+    db.execute("UPDATE fee_recipient SET expected_amount = 0.20 WHERE sap_customer_code = 'B'")
+    db.execute("DELETE FROM fee_recipient WHERE sap_customer_code IN ('C', 'D', 'E')")
+    db.commit()
+
+    overview = get_confirmation_overview(db, "2026-09")
+
+    assert overview["recipient"]["expectedAmount"] == 0.30
+
+
+def test_confirmation_exception_pagination_is_stable(db):
+    first = list_confirmation_exceptions(db, "2026-09", None, 2, 0)
+    second = list_confirmation_exceptions(db, "2026-09", None, 2, 2)
+
+    assert first["total"] == second["total"] == 6
+    assert len(first["items"]) == len(second["items"]) == 2
+    assert first["items"] != second["items"]

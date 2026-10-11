@@ -8,6 +8,8 @@ from uuid import uuid4
 from openpyxl import Workbook
 import pytest
 
+import ec101.api.server as server_module
+
 from .conftest import get_json
 
 
@@ -133,3 +135,33 @@ def test_confirmation_routes_validate_required_fields_and_unknown_cycle(api_serv
             recipients_content(),
         )
     assert bad_upload.value.code == 400
+
+
+def test_confirmation_upload_rejects_malformed_workbook_as_json_400(api_server):
+    with pytest.raises(HTTPError) as malformed:
+        post_workbook(
+            f"{api_server}/api/fee-confirmation/surveys",
+            {"feeCycle": "2026-09"},
+            "survey",
+            "survey.xlsx",
+            b"not-an-xlsx",
+        )
+
+    assert malformed.value.code == 400
+    assert "error" in json.loads(malformed.value.read())
+
+
+def test_confirmation_upload_enforces_request_size_limit(api_server, monkeypatch):
+    monkeypatch.setattr(server_module, "MAX_MULTIPART_BYTES", 128)
+
+    with pytest.raises(HTTPError) as too_large:
+        post_workbook(
+            f"{api_server}/api/fee-confirmation/surveys",
+            {"feeCycle": "2026-09"},
+            "survey",
+            "survey.xlsx",
+            survey_content(),
+        )
+
+    assert too_large.value.code == 400
+    assert "大小" in json.loads(too_large.value.read())["error"]

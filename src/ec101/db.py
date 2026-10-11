@@ -51,9 +51,37 @@ def upgrade_database(path: Path) -> None:
                 f"VALUES ('{version_sql}', '{applied_at}');\n"
                 "COMMIT;"
             )
+        _backfill_platform_customer_identities(connection)
     except Exception:
         if connection.in_transaction:
             connection.rollback()
         raise
     finally:
         connection.close()
+
+
+def _backfill_platform_customer_identities(connection: sqlite3.Connection) -> None:
+    tables = {
+        row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    if not {"customer", "import_batch", "platform_customer_identity"} <= tables:
+        return
+    rows = connection.execute(
+        "SELECT c.dealer_platform_id, c.customer_no, c.customer_name, "
+        "COALESCE(c.added_at, ib.imported_at) AS seen_at "
+        "FROM customer c JOIN import_batch ib ON ib.import_batch_id = c.import_batch_id "
+        "WHERE c.customer_no <> '' ORDER BY seen_at, c.customer_id"
+    ).fetchall()
+    with connection:
+        for row in rows:
+            connection.execute(
+                "INSERT INTO platform_customer_identity "
+                "(dealer_platform_id, platform_customer_no, latest_customer_name, "
+                "first_seen_at, last_seen_at, status) VALUES (?, ?, ?, ?, ?, 'active') "
+                "ON CONFLICT(dealer_platform_id, platform_customer_no) DO UPDATE SET "
+                "latest_customer_name = excluded.latest_customer_name, "
+                "last_seen_at = excluded.last_seen_at, status = 'active'",
+                (row[0], row[1], row[2], row[3], row[3]),
+            )

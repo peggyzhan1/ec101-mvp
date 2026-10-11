@@ -6,8 +6,11 @@ import math
 from pathlib import Path
 import re
 from typing import Any
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 
 RECIPIENT_HEADERS = (
@@ -29,6 +32,7 @@ SURVEY_HEADERS = (
     "提交时间",
     "问卷星原始序号",
 )
+MAX_CONFIRMATION_ROWS = 50_000
 
 
 class FeeRecipientValidationError(ValueError):
@@ -37,6 +41,13 @@ class FeeRecipientValidationError(ValueError):
 
 class SurveyValidationError(ValueError):
     pass
+
+
+def _load_confirmation_workbook(path: str | Path, error_type, label: str):
+    try:
+        return load_workbook(path, read_only=True, data_only=True)
+    except (BadZipFile, InvalidFileException, OSError, ParseError, KeyError) as exc:
+        raise error_type(f"{label}不是有效的 XLSX 文件") from exc
 
 
 def normalize_customer_code(value: Any) -> str:
@@ -71,7 +82,7 @@ def parse_positive_amount(value: Any) -> Decimal:
 
 
 def read_fee_recipient_workbook(path: str | Path) -> list[dict[str, str]]:
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    workbook = _load_confirmation_workbook(path, FeeRecipientValidationError, "应发名单")
     try:
         if len(workbook.sheetnames) != 1:
             raise FeeRecipientValidationError("应发名单必须且只能包含一个工作表")
@@ -82,6 +93,8 @@ def read_fee_recipient_workbook(path: str | Path) -> list[dict[str, str]]:
             raise FeeRecipientValidationError("应发名单表头必须与标准字段完全一致")
         result = []
         for row_number, values in enumerate(rows, start=2):
+            if row_number > MAX_CONFIRMATION_ROWS + 1:
+                raise FeeRecipientValidationError(f"应发名单不能超过 {MAX_CONFIRMATION_ROWS} 行")
             padded = tuple(values) + (None,) * (len(RECIPIENT_HEADERS) - len(values))
             values = padded[:len(RECIPIENT_HEADERS)]
             if not any(value is not None and str(value).strip() for value in values):
@@ -112,7 +125,7 @@ def _survey_text(value: Any) -> str:
 
 
 def read_survey_workbook(path: str | Path) -> list[dict[str, str]]:
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    workbook = _load_confirmation_workbook(path, SurveyValidationError, "问卷答卷")
     try:
         if len(workbook.sheetnames) != 1:
             raise SurveyValidationError("问卷答卷必须且只能包含一个工作表")
@@ -123,6 +136,8 @@ def read_survey_workbook(path: str | Path) -> list[dict[str, str]]:
             raise SurveyValidationError("问卷答卷表头必须与标准字段完全一致")
         result = []
         for row_number, values in enumerate(rows, start=2):
+            if row_number > MAX_CONFIRMATION_ROWS + 1:
+                raise SurveyValidationError(f"问卷答卷不能超过 {MAX_CONFIRMATION_ROWS} 行")
             padded = tuple(values) + (None,) * (len(SURVEY_HEADERS) - len(values))
             values = padded[:len(SURVEY_HEADERS)]
             if not any(_survey_text(value) for value in values):
