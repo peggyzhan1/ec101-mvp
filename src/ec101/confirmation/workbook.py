@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import math
 from pathlib import Path
@@ -17,8 +18,24 @@ RECIPIENT_HEADERS = (
     "备注",
 )
 
+SURVEY_HEADERS = (
+    "费用周期",
+    "太古客户编号",
+    "太古客户名称",
+    "是否收到本期全部协议费用",
+    "未收到原因",
+    "补充说明",
+    "答卷手机号",
+    "提交时间",
+    "问卷星原始序号",
+)
+
 
 class FeeRecipientValidationError(ValueError):
+    pass
+
+
+class SurveyValidationError(ValueError):
     pass
 
 
@@ -81,6 +98,44 @@ def read_fee_recipient_workbook(path: str | Path) -> list[dict[str, str]]:
                 "应发金额": format(amount, ".2f"),
                 "备注": "" if values[4] is None else str(values[4]).strip(),
             })
+        return result
+    finally:
+        workbook.close()
+
+
+def _survey_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value).strip()
+
+
+def read_survey_workbook(path: str | Path) -> list[dict[str, str]]:
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        if len(workbook.sheetnames) != 1:
+            raise SurveyValidationError("问卷答卷必须且只能包含一个工作表")
+        sheet = workbook[workbook.sheetnames[0]]
+        rows = sheet.iter_rows(values_only=True)
+        headers = tuple(_survey_text(value) for value in next(rows, ()))
+        if headers != SURVEY_HEADERS:
+            raise SurveyValidationError("问卷答卷表头必须与标准字段完全一致")
+        result = []
+        for row_number, values in enumerate(rows, start=2):
+            padded = tuple(values) + (None,) * (len(SURVEY_HEADERS) - len(values))
+            values = padded[:len(SURVEY_HEADERS)]
+            if not any(_survey_text(value) for value in values):
+                continue
+            code = ""
+            if _survey_text(values[1]):
+                try:
+                    code = normalize_customer_code(values[1])
+                except FeeRecipientValidationError as exc:
+                    raise SurveyValidationError(f"第 {row_number} 行：{exc}") from exc
+            normalized = [_survey_text(value) for value in values]
+            normalized[1] = code
+            result.append(dict(zip(SURVEY_HEADERS, normalized)))
         return result
     finally:
         workbook.close()
