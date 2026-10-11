@@ -23,3 +23,34 @@ export interface Issue { orderNo: string | null; issueType: string; level: strin
 export interface Roi { activityNo: string; activityName: string; roi: number | null; [key: string]: unknown }
 export interface ImportResult { importBatchId: number; calculationRunId: number; status: string }
 export interface BusinessRow { [key: string]: string | number | null }
+
+export interface ConfirmationMetric { customerCount: number; expectedAmount: number }
+export interface ConfirmationOverview {
+  feeCycleCode: string;
+  recipient: ConfirmationMetric; submitted: ConfirmationMetric; notSubmitted: ConfirmationMetric;
+  received: ConfirmationMetric; notReceived: ConfirmationMetric; conflict: ConfirmationMetric;
+  outsideListResponseCount: number; unmatchedMapping: ConfirmationMetric; ambiguousMapping: ConfirmationMetric;
+}
+export interface ConfirmationRecipient {
+  feeRecipientId: number; feeCycleCode: string; sapCustomerCode: string; sapCustomerName: string;
+  expectedAmount: number; mappingStatus: string; mappingReason?: string | null;
+  platformCustomerNo?: string | null; surveyResponseId?: number | null;
+  receivedAnswer?: string | null; notReceivedReason?: string | null; customerComment?: string | null;
+  submittedAt?: string | null; hasConflict: boolean; confirmationStatus: string; rawSequenceNo?: string | null;
+}
+export interface ConfirmationException {
+  kind: string; sapCustomerCode?: string | null; sapCustomerName?: string | null;
+  expectedAmount?: number | null; receivedAnswer?: string | null; submittedAt?: string | null;
+  rawSequenceNo?: string | null; matchReason?: string | null;
+}
+export interface RecipientUploadInput {
+  feeCycle: string; cycleName: string; periodStart: string; periodEnd: string; masterSyncBatchId: number;
+}
+export interface RecipientImportResult {
+  feeCycleId: number; inputRowCount: number; recipientCount: number;
+  matchedCount: number; unmatchedCount: number; ambiguousCount: number;
+}
+export interface SurveyImportResult {
+  surveyImportBatchId: number; rowCount: number; matchedCount: number;
+  unmatchedCount: number; invalidCount: number;
+}

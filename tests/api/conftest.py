@@ -10,6 +10,7 @@ import pytest
 
 from ec101.api.server import create_handler
 from ec101.calculation.engine import calculate_batch
+from ec101.confirmation.master_data import sync_master_data
 from ec101.contract.workbook import read_standard_workbook
 from ec101.converters.kuaima import convert_kuaima
 from ec101.db import connect_database, create_database
@@ -43,6 +44,29 @@ def api_seed(tmp_path):
     conversion_b = convert_kuaima(request_b)
     batch_b = import_conversion(db, conversion_b).import_batch_id
     latest_b = calculate_batch(db, batch_b, "2026-09-22")
+    platform_id = db.execute(
+        "SELECT dealer_platform_id FROM customer WHERE import_batch_id = ? LIMIT 1",
+        (batch_a,),
+    ).fetchone()[0]
+    master_sync = sync_master_data(
+        db,
+        "areapartner",
+        [{
+            "sap_customer_primary_key": "sap-pk-1",
+            "sap_customer_code": "0570502563",
+            "sap_customer_name": "佳源食品商行",
+        }],
+        [{
+            "source_mapping_id": "mapping-1",
+            "dealer_platform_id": platform_id,
+            "source_customer_code": "C1",
+            "source_customer_name": "客户一",
+            "sap_customer_code": "0570502563",
+            "sap_customer_name": "佳源食品商行",
+            "match_status": "匹配成功",
+        }],
+        "2026-10-01 09:00:00",
+    )
     db.close()
 
     return {
@@ -54,6 +78,7 @@ def api_seed(tmp_path):
         "latest_a": latest_a,
         "latest_b": latest_b,
         "conversion_a": conversion_a,
+        "master_sync_batch_id": master_sync.master_sync_batch_id,
     }
 
 

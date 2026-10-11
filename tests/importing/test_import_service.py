@@ -53,6 +53,23 @@ def test_import_maps_all_core_tables_and_leaves_result_empty(db, workbook_factor
     assert db.execute("SELECT status FROM import_batch").fetchone()[0] == "imported"
     for table in RESULT_TABLES:
         assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    assert tuple(db.execute(
+        "SELECT platform_customer_no, latest_customer_name, first_seen_at, last_seen_at "
+        "FROM platform_customer_identity"
+    ).fetchone()) == ("C1", "客户一", "2026-10-08 12:00:00", "2026-10-08 12:00:00")
+
+
+def test_reimport_updates_stable_customer_identity_without_duplicating_it(db, workbook_factory):
+    import_snapshot(db, workbook_factory(), archive(1))
+    newer = workbook_factory(**{"生成时间": "2026-10-09 12:00:00"})
+    newer.tables["标准客户"][0]["客户名称"] = "客户一新名称"
+
+    import_snapshot(db, newer, archive(2))
+
+    assert db.execute("SELECT COUNT(*) FROM platform_customer_identity").fetchone()[0] == 1
+    assert tuple(db.execute(
+        "SELECT latest_customer_name, first_seen_at, last_seen_at FROM platform_customer_identity"
+    ).fetchone()) == ("客户一新名称", "2026-10-08 12:00:00", "2026-10-09 12:00:00")
 
 
 def test_import_rolls_back_everything_on_invalid_child_row(db, workbook_factory):
