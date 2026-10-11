@@ -12,8 +12,19 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from ec101.calculation.engine import calculate_batch
+from ec101.confirmation.queries import (
+    get_confirmation_overview,
+    list_confirmation_exceptions,
+    list_confirmation_reconciliation,
+)
+from ec101.confirmation.recipients import FeeCycleInput, import_fee_recipients
+from ec101.confirmation.surveys import import_survey_responses
+from ec101.confirmation.workbook import (
+    read_fee_recipient_workbook,
+    read_survey_workbook,
+)
 from ec101.contract.workbook import read_standard_workbook
-from ec101.db import connect_database, create_database
+from ec101.db import connect_database, create_database, upgrade_database
 from ec101.importing.service import ArchiveMetadata, import_snapshot
 from ec101.reporting.roi import query_roi
 from ec101.reporting.verification import build_verification_workbook
@@ -105,6 +116,21 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
         def _dispatch_get(self, db, path, query):
             limit = _integer(query, "limit", 100)
             offset = _integer(query, "offset", 0)
+            if path.startswith("/api/fee-confirmation/"):
+                fee_cycle = query.get("feeCycle", [""])[0].strip()
+                if not fee_cycle:
+                    raise ValueError("必须提供 feeCycle")
+                if path == "/api/fee-confirmation/overview":
+                    return get_confirmation_overview(db, fee_cycle)
+                if path == "/api/fee-confirmation/recipients":
+                    return list_confirmation_reconciliation(
+                        db, fee_cycle, query.get("status", [None])[0],
+                        query.get("query", [""])[0], limit, offset,
+                    )
+                if path == "/api/fee-confirmation/exceptions":
+                    return list_confirmation_exceptions(
+                        db, fee_cycle, query.get("kind", [None])[0], limit, offset,
+                    )
             if path == "/api/imports":
                 return list_imports(db)
             match = re.fullmatch(r"/api/imports/(\d+)", path)
@@ -154,9 +180,27 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
 
         def do_POST(self):
             path, _ = self._query()
-            if path != "/api/imports":
+            if path not in {
+                "/api/imports",
+                "/api/fee-confirmation/recipients",
+                "/api/fee-confirmation/surveys",
+            }:
                 self._send(404, {"error": f"接口 {path} 不存在"})
                 return
+            try:
+                if path == "/api/imports":
+                    payload = self._post_standard_import()
+                elif path == "/api/fee-confirmation/recipients":
+                    payload = self._post_fee_recipients()
+                else:
+                    payload = self._post_surveys()
+                self._send(201, payload)
+            except LookupError as exc:
+                self._send(404, {"error": str(exc)})
+            except (KeyError, TypeError, ValueError) as exc:
+                self._send(400, {"error": str(exc)})
+
+        def _post_standard_import(self):
             archive_path = None
             workbook_path = None
             try:
@@ -181,7 +225,7 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                     run_id = calculate_batch(db, imported.import_batch_id, fields.get("calcDate") or None)
                 finally:
                     db.close()
-                self._send(201, {
+                return {
                     "importBatchId": imported.import_batch_id,
                     "calculationRunId": run_id,
                     "status": "calculated",
@@ -190,12 +234,91 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
                         "sha256": sha256(source_content).hexdigest(),
                         "fileSize": len(source_content),
                     },
-                })
-            except (KeyError, TypeError, ValueError) as exc:
-                self._send(400, {"error": str(exc)})
+                }
             finally:
                 if workbook_path is not None:
                     workbook_path.unlink(missing_ok=True)
+
+        def _post_fee_recipients(self):
+            temporary_path = None
+            try:
+                fields, files = self._multipart()
+                if "recipients" not in files:
+                    raise ValueError("必须上传 recipients")
+                required = (
+                    "feeCycle", "cycleName", "periodStart", "periodEnd", "masterSyncBatchId",
+                )
+                missing = [name for name in required if not fields.get(name, "").strip()]
+                if missing:
+                    raise ValueError(f"缺少字段：{', '.join(missing)}")
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                with NamedTemporaryFile(dir=archive_dir, suffix=".xlsx", delete=False) as temporary:
+                    temporary.write(files["recipients"][1])
+                    temporary_path = Path(temporary.name)
+                rows = read_fee_recipient_workbook(temporary_path)
+                db = connect_database(db_path)
+                try:
+                    result = import_fee_recipients(
+                        db,
+                        FeeCycleInput(
+                            fields["feeCycle"].strip(),
+                            fields["cycleName"].strip(),
+                            fields["periodStart"].strip(),
+                            fields["periodEnd"].strip(),
+                        ),
+                        rows,
+                        int(fields["masterSyncBatchId"]),
+                    )
+                finally:
+                    db.close()
+                return {
+                    "feeCycleId": result.fee_cycle_id,
+                    "inputRowCount": result.input_row_count,
+                    "recipientCount": result.recipient_count,
+                    "matchedCount": result.matched_count,
+                    "unmatchedCount": result.unmatched_count,
+                    "ambiguousCount": result.ambiguous_count,
+                }
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
+
+        def _post_surveys(self):
+            temporary_path = None
+            try:
+                fields, files = self._multipart()
+                if "survey" not in files:
+                    raise ValueError("必须上传 survey")
+                fee_cycle = fields.get("feeCycle", "").strip()
+                if not fee_cycle:
+                    raise ValueError("缺少字段：feeCycle")
+                filename, content = files["survey"]
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                with NamedTemporaryFile(dir=archive_dir, suffix=".xlsx", delete=False) as temporary:
+                    temporary.write(content)
+                    temporary_path = Path(temporary.name)
+                rows = read_survey_workbook(temporary_path)
+                db = connect_database(db_path)
+                try:
+                    if db.execute(
+                        "SELECT 1 FROM fee_cycle WHERE fee_cycle_code = ?", (fee_cycle,)
+                    ).fetchone() is None:
+                        raise LookupError(f"费用周期 {fee_cycle} 不存在")
+                    result = import_survey_responses(
+                        db, fee_cycle, filename, sha256(content).hexdigest(), rows
+                    )
+                finally:
+                    db.close()
+                return {
+                    "surveyImportBatchId": result.survey_import_batch_id,
+                    "rowCount": result.row_count,
+                    "matchedCount": result.matched_count,
+                    "unmatchedCount": result.unmatched_count,
+                    "invalidCount": result.invalid_count,
+                }
+            finally:
+                if temporary_path is not None:
+                    temporary_path.unlink(missing_ok=True)
 
         def _multipart(self):
             content_type = self.headers.get("Content-Type", "")
@@ -224,6 +347,8 @@ def create_handler(db_path: Path, archive_dir: Path) -> type[BaseHTTPRequestHand
 def serve(host: str, port: int, db_path: Path, archive_dir: Path) -> None:
     if not db_path.exists():
         create_database(db_path)
+    else:
+        upgrade_database(db_path)
     server = ThreadingHTTPServer((host, port), create_handler(db_path, archive_dir))
     server.serve_forever()
 
